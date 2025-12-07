@@ -10,6 +10,7 @@ from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg, SceneEntityCfg
+from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
@@ -99,12 +100,27 @@ class SpotObservationsCfg:
         actions = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+
+    @configclass
+    class CriticCfg(PolicyCfg):
+        """Observations for critic group."""
+
+        height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            clip=(-1.0, 1.0),
+        )
+
+        def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = True
 
     # observation groups
     policy: PolicyCfg = PolicyCfg()
-
+    critic: CriticCfg = CriticCfg()
+    print(f"SpotObservationsCfg initialized with observation groups: {policy},\n {critic}")
 
 @configclass
 class SpotEventCfg:
@@ -239,9 +255,9 @@ class SpotRewardsCfg:
     base_motion = RewardTermCfg(
         func=spot_mdp.base_motion_penalty, weight=-2.0, params={"asset_cfg": SceneEntityCfg("robot")}
     )
-    base_orientation = RewardTermCfg(
-        func=spot_mdp.base_orientation_penalty, weight=-3.0, params={"asset_cfg": SceneEntityCfg("robot")}
-    )
+    # base_orientation = RewardTermCfg(
+    #     func=spot_mdp.base_orientation_penalty, weight=-3.0, params={"asset_cfg": SceneEntityCfg("robot")}
+    # )
     foot_slip = RewardTermCfg(
         func=spot_mdp.foot_slip_penalty,
         weight=-0.5,
@@ -351,8 +367,14 @@ class SpotFlatEnvCfg(LocomotionVelocityRoughEnvCfg):
             debug_vis=True,
         )
 
-        # no height scan
-        self.scene.height_scanner = None
+        self.scene.height_scanner = RayCasterCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/body",
+            offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+            ray_alignment="yaw",
+            pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+            debug_vis=True,
+            mesh_prim_paths=["/World/ground"],
+        )
 
 
 class SpotFlatEnvCfg_PLAY(SpotFlatEnvCfg):
