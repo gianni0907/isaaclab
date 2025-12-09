@@ -256,9 +256,9 @@ class SpotRewardsCfg:
     base_motion = RewardTermCfg(
         func=spot_mdp.base_motion_penalty, weight=-2.0, params={"asset_cfg": SceneEntityCfg("robot")}
     )
-    base_orientation = RewardTermCfg(
-        func=spot_mdp.base_orientation_penalty, weight=-3.0, params={"asset_cfg": SceneEntityCfg("robot")}
-    )
+    # base_orientation = RewardTermCfg(
+    #     func=spot_mdp.base_orientation_penalty, weight=-3.0, params={"asset_cfg": SceneEntityCfg("robot")}
+    # )
     foot_slip = RewardTermCfg(
         func=spot_mdp.foot_slip_penalty,
         weight=-0.5,
@@ -311,7 +311,7 @@ class SpotTerminationsCfg:
 
 
 @configclass
-class SpotFlatEnvCfg(LocomotionVelocityRoughEnvCfg):
+class SpotRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
     # Basic settings
     observations: SpotObservationsCfg = SpotObservationsCfg()
@@ -378,7 +378,7 @@ class SpotFlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         )
 
 
-class SpotFlatEnvCfg_PLAY(SpotFlatEnvCfg):
+class SpotRoughEnvCfg_PLAY(SpotRoughEnvCfg):
     def __post_init__(self) -> None:
         # post init of parent
         super().__post_init__()
