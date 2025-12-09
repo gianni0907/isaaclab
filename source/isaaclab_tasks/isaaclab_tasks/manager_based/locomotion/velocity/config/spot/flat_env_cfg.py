@@ -301,7 +301,7 @@ class SpotTerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     body_contact = DoneTerm(
         func=mdp.illegal_contact,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=["body"]), "threshold": 1.0},
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=["body", ".*leg"]), "threshold": 1.0},
     )
     terrain_out_of_bounds = DoneTerm(
         func=mdp.terrain_out_of_bounds,
