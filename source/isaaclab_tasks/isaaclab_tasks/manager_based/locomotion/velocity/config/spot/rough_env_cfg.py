@@ -9,6 +9,7 @@ from isaaclab.envs import ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.manaegrs import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import RewardTermCfg, SceneEntityCfg
 from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.managers import TerminationTermCfg as DoneTerm
@@ -265,9 +266,9 @@ class SpotRewardsCfg:
     base_motion = RewardTermCfg(
         func=spot_mdp.base_motion_penalty, weight=-2.0, params={"asset_cfg": SceneEntityCfg("robot")}
     )
-    # base_orientation = RewardTermCfg(
-    #     func=spot_mdp.base_orientation_penalty, weight=-3.0, params={"asset_cfg": SceneEntityCfg("robot")}
-    # )
+    base_orientation = RewardTermCfg(
+        func=spot_mdp.base_orientation_penalty, weight=0.0, params={"asset_cfg": SceneEntityCfg("robot")}
+    )
     foot_slip = RewardTermCfg(
         func=spot_mdp.foot_slip_penalty,
         weight=-0.5,
@@ -284,7 +285,7 @@ class SpotRewardsCfg:
     )
     joint_pos = RewardTermCfg(
         func=spot_mdp.joint_position_penalty,
-        weight=-0.7,
+        weight=0.0,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
             "stand_still_scale": 5.0,
@@ -318,6 +319,11 @@ class SpotTerminationsCfg:
         time_out=True,
     )
 
+@configclass
+class CurriculumCfg:
+    """Curriculum terms for the MDP."""
+
+    terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
 
 @configclass
 class SpotRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
@@ -331,6 +337,7 @@ class SpotRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
     rewards: SpotRewardsCfg = SpotRewardsCfg()
     terminations: SpotTerminationsCfg = SpotTerminationsCfg()
     events: SpotEventCfg = SpotEventCfg()
+    curriculum: CurriculumCfg = CurriculumCfg()
 
     # Viewer
     viewer = ViewerCfg(eye=(10.5, 10.5, 0.3), origin_type="world", env_index=0, asset_name="robot")
@@ -386,6 +393,12 @@ class SpotRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
             mesh_prim_paths=["/World/ground"],
         )
 
+        if getattr(self.curriculum, "terrain_levels", None) is not None:
+            if self.scene.terrain.terrain_generator is not None:
+                self.scene.terrain.terrain_generator.curriculum = True
+        else:
+            if self.scene.terrain.terrain_generator is not None:
+                self.scene.terrain.terrain_generator.curriculum = False
 
 class SpotRoughEnvCfg_PLAY(SpotRoughEnvCfg):
     def __post_init__(self) -> None:
