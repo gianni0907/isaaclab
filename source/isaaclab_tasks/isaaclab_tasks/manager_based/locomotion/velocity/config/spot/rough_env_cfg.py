@@ -9,7 +9,7 @@ from isaaclab.envs import ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
-from isaaclab.manaegrs import CurriculumTermCfg as CurrTerm
+from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import RewardTermCfg, SceneEntityCfg
 from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.managers import TerminationTermCfg as DoneTerm
