@@ -76,8 +76,8 @@ class SpotObservationsCfg:
     """Observation specifications for the MDP."""
 
     @configclass
-    class PolicyCfg(ObsGroup):
-        """Observations for policy group."""
+    class NoisyObservationsCfg(ObsGroup):
+        """Noisy observations for policy group."""
 
         # `` observation terms (order preserved)
         base_lin_vel = ObsTerm(
@@ -105,8 +105,16 @@ class SpotObservationsCfg:
             self.concatenate_terms = True
 
     @configclass
-    class CriticCfg(PolicyCfg):
-        """Observations for critic group."""
+    class NoisyObservationsHistory(NoisyObservationsCfg):
+        """Noisy observations history for policy group."""
+
+        def __post_init__(self):
+            self.history_length = 5
+            self.flatten_history_dim = False
+
+    @configclass
+    class PrivilegedObservationsCfg(NoisyObservationsCfg):
+        """Privileged observations for critic group."""
 
         height_scan = ObsTerm(
             func=mdp.height_scan,
@@ -119,9 +127,10 @@ class SpotObservationsCfg:
             self.concatenate_terms = True
 
     # observation groups
-    policy: PolicyCfg = PolicyCfg()
-    critic: CriticCfg = CriticCfg()
-    print(f"SpotObservationsCfg initialized with observation groups: {policy},\n {critic}")
+    state: NoisyObservationsCfg = NoisyObservationsCfg()
+    state_history: NoisyObservationsHistory = NoisyObservationsHistory()
+    privileged_state: PrivilegedObservationsCfg = PrivilegedObservationsCfg()
+    print(f"SpotObservationsCfg initialized with observation groups: {state},\n {state_history},\n {privileged_state}")
 
 @configclass
 class SpotEventCfg:

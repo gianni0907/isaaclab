@@ -121,7 +121,6 @@ class SpotObservationsCfg:
     # observation groups
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
-    print(f"SpotObservationsCfg initialized with observation groups: {policy},\n {critic}")
 
 @configclass
 class SpotEventCfg:

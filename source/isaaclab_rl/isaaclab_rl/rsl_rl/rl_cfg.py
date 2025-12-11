@@ -67,6 +67,22 @@ class RslRlPpoActorCriticRecurrentCfg(RslRlPpoActorCriticCfg):
     """The number of RNN layers."""
 
 
+@configclass
+class RslRlActorCriticImitationCfg(RslRlPpoActorCriticCfg):
+    """Configuration for the actor-critic networks used in imitation learning."""
+
+    class_name: str = "ActorCriticImitation"
+    """The policy class name. Default is ActorCriticImitation."""
+
+    actor_encoder_hidden_dims: list[int] = MISSING
+    """The hidden dimensions of the actor TCN encoder network."""
+
+    critic_encoder_hidden_dims: list[int] = MISSING
+    """The hidden dimensions of the critic MLP encoder network."""
+
+    latent_dim: int = MISSING
+    """The dimension of the latent space."""
+
 ############################
 # Algorithm configurations #
 ############################
