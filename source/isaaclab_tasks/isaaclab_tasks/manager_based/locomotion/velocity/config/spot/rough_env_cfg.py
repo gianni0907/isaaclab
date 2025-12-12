@@ -418,5 +418,5 @@ class SpotRoughEnvCfg_PLAY(SpotRoughEnvCfg):
             self.scene.terrain.terrain_generator.curriculum = False
 
         # disable randomization for play
-        self.observations.policy.enable_corruption = False
+        self.observations.state.enable_corruption = False
         # remove random pushing event
