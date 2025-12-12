@@ -6,6 +6,7 @@
 import copy
 import os
 import torch
+from typing import Tuple
 
 
 def export_policy_as_jit(policy: object, normalizer: object | None, path: str, filename="policy.pt"):
@@ -50,15 +51,22 @@ class _TorchPolicyExporter(torch.nn.Module):
     def __init__(self, policy, normalizer=None):
         super().__init__()
         self.is_recurrent = policy.is_recurrent
+        self.is_imitation = policy.is_imitation
         # copy policy parameters
         if hasattr(policy, "actor"):
             self.actor = copy.deepcopy(policy.actor)
             if self.is_recurrent:
                 self.rnn = copy.deepcopy(policy.memory_a.rnn)
+            if self.is_imitation:
+                self.enc = copy.deepcopy(policy.enc_a)
         elif hasattr(policy, "student"):
             self.actor = copy.deepcopy(policy.student)
             if self.is_recurrent:
                 self.rnn = copy.deepcopy(policy.memory_s.rnn)
+        elif hasattr(policy, "head_a"):
+            self.actor = copy.deepcopy(policy.head_a)
+            if self.is_imitation:
+                self.enc = copy.deepcopy(policy.enc_a)
         else:
             raise ValueError("Policy does not have an actor/student module.")
         # set up recurrent network
@@ -75,6 +83,10 @@ class _TorchPolicyExporter(torch.nn.Module):
                 self.reset = self.reset_memory
             else:
                 raise NotImplementedError(f"Unsupported RNN type: {self.rnn_type}")
+        # set up tcn-based actor network
+        if self.is_imitation:
+            self.enc.cpu()
+            self.forward = self.forward_tcn
         # copy normalizer if exists
         if normalizer:
             self.normalizer = copy.deepcopy(normalizer)
@@ -94,6 +106,15 @@ class _TorchPolicyExporter(torch.nn.Module):
         x, h = self.rnn(x.unsqueeze(0), self.hidden_state)
         self.hidden_state[:] = h
         x = x.squeeze(0)
+        return self.actor(x)
+
+    def forward_tcn(self, x: Tuple[torch.Tensor, torch.Tensor]):
+        state_history, state = x
+        state_history = self.normalizer(state_history)
+        state = self.normalizer(state)
+        state_history = state_history.permute(0, 2, 1).contiguous()  # Change to (batch, channels, time) for TCN
+        x = self.enc(state_history).mean(dim=-1)  # Global average pooling over time dimension
+        x = torch.cat([x, state], dim=-1)
         return self.actor(x)
 
     def forward(self, x):
@@ -123,15 +144,24 @@ class _OnnxPolicyExporter(torch.nn.Module):
         super().__init__()
         self.verbose = verbose
         self.is_recurrent = policy.is_recurrent
+        self.is_imitation = policy.is_imitation
         # copy policy parameters
         if hasattr(policy, "actor"):
             self.actor = copy.deepcopy(policy.actor)
             if self.is_recurrent:
                 self.rnn = copy.deepcopy(policy.memory_a.rnn)
+            if self.is_imitation:
+                self.enc = copy.deepcopy(policy.enc_a)
         elif hasattr(policy, "student"):
             self.actor = copy.deepcopy(policy.student)
             if self.is_recurrent:
                 self.rnn = copy.deepcopy(policy.memory_s.rnn)
+        elif hasattr(policy, "head_a"):
+            self.actor = copy.deepcopy(policy.head_a)
+            if self.is_imitation:
+                self.enc = copy.deepcopy(policy.enc_a)
+                self.state_history_input_shape = policy.state_history_shape
+                self.state_size = policy.num_actor_state_obs
         else:
             raise ValueError("Policy does not have an actor/student module.")
         # set up recurrent network
@@ -144,6 +174,10 @@ class _OnnxPolicyExporter(torch.nn.Module):
                 self.forward = self.forward_gru
             else:
                 raise NotImplementedError(f"Unsupported RNN type: {self.rnn_type}")
+        # set up tcn-based actor network
+        if self.is_imitation:
+            self.enc.cpu()
+            self.forward = self.forward_tcn
         # copy normalizer if exists
         if normalizer:
             self.normalizer = copy.deepcopy(normalizer)
@@ -161,6 +195,14 @@ class _OnnxPolicyExporter(torch.nn.Module):
         x, h = self.rnn(x_in.unsqueeze(0), h_in)
         x = x.squeeze(0)
         return self.actor(x), h
+
+    def forward_tcn(self, x_history, x):
+        x_history = self.normalizer(x_history)
+        x = self.normalizer(x)
+        x_history = x_history.permute(0, 2, 1).contiguous()  # Change to (batch, channels, time) for TCN
+        encoded_x = self.enc(x_history).mean(dim=-1)  # Global average pooling over time dimension
+        x = torch.cat([encoded_x, x], dim=-1)
+        return self.actor(x)
 
     def forward(self, x):
         return self.actor(self.normalizer(x))
@@ -200,6 +242,22 @@ class _OnnxPolicyExporter(torch.nn.Module):
                 )
             else:
                 raise NotImplementedError(f"Unsupported RNN type: {self.rnn_type}")
+        elif self.is_imitation:
+            print("state_history_input_shape:", self.state_history_input_shape)
+            history_shape = tuple(self.state_history_input_shape)
+            obs_history = torch.zeros(1, *history_shape)
+            obs = torch.zeros(1, self.state_size)
+            torch.onnx.export(
+                self,
+                (obs_history, obs),
+                os.path.join(path, filename),
+                export_params=True,
+                opset_version=opset_version,
+                verbose=self.verbose,
+                input_names=["state_history", "state"],
+                output_names=["actions"],
+                dynamic_axes={},
+            )
         else:
             obs = torch.zeros(1, self.actor[0].in_features)
             torch.onnx.export(
