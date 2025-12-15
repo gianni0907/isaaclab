@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import re
 import torch
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Literal
 
 import carb
@@ -642,6 +643,218 @@ class randomize_actuator_gains(ManagerTermBase):
                 if isinstance(actuator, ImplicitActuator):
                     self.asset.write_joint_damping_to_sim(damping, joint_ids=actuator.joint_indices, env_ids=env_ids)
 
+
+class randomize_actuator_shutdown(ManagerTermBase):
+    """Randomize actuator gains by scaling defaults with per-joint bounds supplied at call time."""
+
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+
+        self.asset_cfg: SceneEntityCfg = cfg.params["asset_cfg"]
+        self.asset: RigidObject | Articulation = env.scene[self.asset_cfg.name]
+
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor | None,
+        asset_cfg: SceneEntityCfg,
+        stiffness_distribution_params: tuple[Sequence[float] | float | torch.Tensor, Sequence[float] | float | torch.Tensor]
+        | None = None,
+        damping_distribution_params: tuple[Sequence[float] | float | torch.Tensor, Sequence[float] | float | torch.Tensor]
+        | None = None,
+        operation: Literal["add", "scale", "abs"] = "scale",
+        distribution: Literal["uniform", "log_uniform", "gaussian"] = "uniform",
+        joint_fault_mask: Sequence[Sequence[bool]] | torch.Tensor | None = None,
+    ) -> None:
+        if env_ids is None:
+            env_ids = torch.arange(env.scene.num_envs, device=self.asset.device)
+        else:
+            env_ids = torch.as_tensor(env_ids, device=self.asset.device, dtype=torch.long)
+
+        if operation != "scale":
+            raise ValueError(
+                "randomize_actuator_shutdown expects operation='scale' so distribution params act as multiplicative factors."
+            )
+
+        fault_mask_tensor = self._resolve_joint_fault_mask(joint_fault_mask)
+
+        def randomize(data: torch.Tensor, lower: torch.Tensor, upper: torch.Tensor) -> torch.Tensor:
+            params = (lower, upper)
+            return _randomize_prop_by_op(
+                data,
+                params,
+                dim_0_ids=None,
+                dim_1_ids=actuator_indices,
+                operation=operation,
+                distribution=distribution,
+            )
+
+        for actuator in self.asset.actuators.values():
+            if isinstance(self.asset_cfg.joint_ids, slice):
+                actuator_indices = slice(None)
+                if isinstance(actuator.joint_indices, slice):
+                    global_indices = slice(None)
+                elif isinstance(actuator.joint_indices, torch.Tensor):
+                    global_indices = actuator.joint_indices.to(self.asset.device)
+                else:
+                    raise TypeError("Actuator joint indices must be a slice or a torch.Tensor.")
+            elif isinstance(actuator.joint_indices, slice):
+                global_indices = actuator_indices = torch.tensor(self.asset_cfg.joint_ids, device=self.asset.device)
+            else:
+                actuator_joint_indices = actuator.joint_indices
+                asset_joint_ids = torch.tensor(self.asset_cfg.joint_ids, device=self.asset.device)
+                actuator_indices_tensor = torch.nonzero(torch.isin(actuator_joint_indices, asset_joint_ids)).view(-1)
+                if actuator_indices_tensor.numel() == 0:
+                    continue
+                actuator_indices = actuator_indices_tensor
+                global_indices = actuator_joint_indices[actuator_indices_tensor]
+
+            local_indices_tensor = self._indices_to_tensor(actuator_indices, actuator.stiffness.shape[1])
+            if local_indices_tensor.numel() == 0:
+                continue
+            global_indices_tensor = self._indices_to_tensor(
+                global_indices, self.asset.data.default_joint_stiffness.shape[1]
+            )
+
+            default_stiffness_all = self.asset.data.default_joint_stiffness[0]
+            default_damping_all = self.asset.data.default_joint_damping[0]
+            default_stiffness = default_stiffness_all[global_indices_tensor]
+            default_damping = default_damping_all[global_indices_tensor]
+
+            mask_local = None
+            if fault_mask_tensor is not None:
+                mask_local = fault_mask_tensor.index_select(0, env_ids)
+                mask_local = mask_local[:, global_indices_tensor]
+
+            if stiffness_distribution_params is not None:
+                lower_stiff, upper_stiff = self._prepare_joint_bounds(
+                    stiffness_distribution_params,
+                    global_indices_tensor,
+                    default_stiffness,
+                    "stiffness",
+                    operation,
+                )
+                stiffness = actuator.stiffness[env_ids].clone()
+                stiffness[:, actuator_indices] = self.asset.data.default_joint_stiffness[env_ids][
+                    :, global_indices
+                ].clone()
+                randomize(stiffness, lower_stiff, upper_stiff)
+                if mask_local is not None:
+                    defaults = self.asset.data.default_joint_stiffness[env_ids][:, global_indices].clone()
+                    updated = torch.where(mask_local, stiffness[:, actuator_indices], defaults)
+                    stiffness[:, actuator_indices] = updated
+                actuator.stiffness[env_ids] = stiffness
+                if isinstance(actuator, ImplicitActuator):
+                    self.asset.write_joint_stiffness_to_sim(stiffness, joint_ids=actuator.joint_indices, env_ids=env_ids)
+
+            if damping_distribution_params is not None:
+                lower_damp, upper_damp = self._prepare_joint_bounds(
+                    damping_distribution_params,
+                    global_indices_tensor,
+                    default_damping,
+                    "damping",
+                    operation,
+                )
+                damping = actuator.damping[env_ids].clone()
+                damping[:, actuator_indices] = self.asset.data.default_joint_damping[env_ids][:, global_indices].clone()
+                randomize(damping, lower_damp, upper_damp)
+                if mask_local is not None:
+                    defaults = self.asset.data.default_joint_damping[env_ids][:, global_indices].clone()
+                    updated = torch.where(mask_local, damping[:, actuator_indices], defaults)
+                    damping[:, actuator_indices] = updated
+                actuator.damping[env_ids] = damping
+                if isinstance(actuator, ImplicitActuator):
+                    self.asset.write_joint_damping_to_sim(damping, joint_ids=actuator.joint_indices, env_ids=env_ids)
+
+    def _prepare_joint_bounds(
+        self,
+        params: tuple[Sequence[float] | float | torch.Tensor, Sequence[float] | float | torch.Tensor],
+        joint_indices: torch.Tensor,
+        default_values: torch.Tensor,
+        param_name: str,
+        operation: Literal["add", "scale", "abs"],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if len(params) != 2:
+            raise ValueError(
+                f"Expected a (min, max) tuple for {param_name}_distribution_params, received {len(params)} elements."
+            )
+        lower = self._value_to_joint_tensor(params[0], joint_indices, default_values, param_name, "min", operation)
+        upper = self._value_to_joint_tensor(params[1], joint_indices, default_values, param_name, "max", operation)
+        if (upper < lower).any():
+            raise ValueError(f"Upper bounds must be greater than or equal to lower bounds for {param_name} randomization.")
+        return lower, upper
+
+    def _resolve_joint_fault_mask(
+        self, mask: Sequence[Sequence[bool]] | torch.Tensor | None
+    ) -> torch.Tensor | None:
+        if mask is None:
+            return None
+
+        mask_tensor = torch.as_tensor(mask, device=self.asset.device, dtype=torch.bool)
+        if mask_tensor.ndim != 2:
+            raise ValueError("joint_fault_mask must be a 2D matrix shaped (num_envs, num_joints).")
+
+        expected_envs = self.asset.data.default_joint_stiffness.shape[0]
+        expected_joints = self.asset.data.default_joint_stiffness.shape[1]
+
+        if mask_tensor.shape[0] != expected_envs or mask_tensor.shape[1] != expected_joints:
+            raise ValueError(
+                "joint_fault_mask has incompatible shape. "
+                f"Expected ({expected_envs}, {expected_joints}) but received {tuple(mask_tensor.shape)}."
+            )
+
+        return mask_tensor
+
+    def _value_to_joint_tensor(
+        self,
+        value: Sequence[float] | float | torch.Tensor | str | None,
+        joint_indices: torch.Tensor,
+        default_values: torch.Tensor,
+        param_name: str,
+        bound_name: str,
+        operation: Literal["add", "scale", "abs"],
+    ) -> torch.Tensor:
+        device = self.asset.device
+        dtype = default_values.dtype
+        joint_count = joint_indices.numel()
+
+        if value is None:
+            if operation == "scale":
+                return torch.ones(joint_count, device=device, dtype=dtype)
+            return default_values.clone().to(device=device)
+        if isinstance(value, str):
+            if value.lower() == "default":
+                if operation == "scale":
+                    return torch.ones(joint_count, device=device, dtype=dtype)
+                return default_values.clone().to(device=device)
+            raise ValueError(
+                f"Unsupported string literal '{value}' for {param_name} {bound_name} specification."
+            )
+
+        tensor = torch.as_tensor(value, device=device, dtype=dtype)
+        tensor = tensor.reshape(-1)
+
+        if tensor.numel() == 1:
+            return tensor.repeat(joint_count)
+
+        total_joints = self.asset.data.default_joint_stiffness.shape[1]
+        if tensor.numel() == total_joints:
+            return tensor[joint_indices]
+
+        if tensor.numel() == joint_count:
+            return tensor
+
+        raise ValueError(
+            f"Unable to broadcast {param_name} {bound_name} values of length {tensor.numel()} "
+            f"to {joint_count} target joints or total articulation size {total_joints}."
+        )
+
+    def _indices_to_tensor(self, indices: slice | torch.Tensor | Sequence[int], total_length: int) -> torch.Tensor:
+        if isinstance(indices, slice):
+            return torch.arange(total_length, device=self.asset.device)[indices]
+        if isinstance(indices, torch.Tensor):
+            return indices.to(self.asset.device)
+        return torch.as_tensor(indices, device=self.asset.device, dtype=torch.long)
 
 class randomize_joint_parameters(ManagerTermBase):
     """Randomize the simulated joint parameters of an articulation by adding, scaling, or setting random values.

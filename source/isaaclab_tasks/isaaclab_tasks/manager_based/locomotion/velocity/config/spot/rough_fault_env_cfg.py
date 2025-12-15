@@ -123,6 +123,11 @@ class SpotObservationsCfg:
             clip=(-1.0, 1.0),
         )
 
+        joint_fault_mask = ObsTerm(
+            func=spot_mdp.actuator_shutdown_fault_mask,
+            params={"asset_cfg": SceneEntityCfg("robot"), "event_name": "actuator_shutdown"},
+        )
+
         def __post_init__(self):
             self.enable_corruption = False
             self.concatenate_terms = True
@@ -199,6 +204,18 @@ class SpotEventCfg:
     )
 
     # interval
+    actuator_shutdown = EventTerm(
+        func=mdp.randomize_actuator_shutdown,
+        mode="interval",
+        interval_range_s=(5.0, 10.0),
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "stiffness_distribution_params": (tuple([1.0] * 12), tuple([1.0] * 12)),
+            "damping_distribution_params": (tuple([1.0] * 12), tuple([1.0] * 12)),
+            "operation": "scale",
+        },
+    )
+
     push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
@@ -328,9 +345,27 @@ class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
     terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
+    actuator_shutdown = spot_mdp.ActuatorShutdownCurriculumCfg(
+        func=spot_mdp.ActuatorShutdownCurriculum,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "command_name": "base_velocity",
+        },
+        event_name="actuator_shutdown",
+        initial_scale=0.25,
+        min_scale=0.0,
+        max_scale=0.25,
+        scale_step=0.05,
+        recovery_step=0.02,
+        tracking_error_threshold=0.35,
+        success_ratio=0.7,
+        update_every=2048,
+        min_command_speed=0.3,
+        weakening_joint_indices=[idx for idx in range(12)],
+    )
 
 @configclass
-class SpotRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
+class SpotRoughFaultEnvCfg(LocomotionVelocityRoughEnvCfg):
 
     # Basic settings
     observations: SpotObservationsCfg = SpotObservationsCfg()
@@ -404,7 +439,7 @@ class SpotRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
             if self.scene.terrain.terrain_generator is not None:
                 self.scene.terrain.terrain_generator.curriculum = False
 
-class SpotRoughEnvCfg_PLAY(SpotRoughEnvCfg):
+class SpotRoughFaultEnvCfg_PLAY(SpotRoughFaultEnvCfg):
     def __post_init__(self) -> None:
         # post init of parent
         super().__post_init__()
