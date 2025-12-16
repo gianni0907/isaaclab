@@ -347,34 +347,37 @@ class SpotFlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.scene.robot = SPOT_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
         # terrain
-        self.scene.terrain =  TerrainImporterCfg(
-            prim_path="/World/ground",
-            terrain_type="generator",
-            terrain_generator=ROUGH_TERRAINS_CFG,
-            max_init_terrain_level=5,
-            collision_group=-1,
-            physics_material=sim_utils.RigidBodyMaterialCfg(
-                friction_combine_mode="multiply",
-                restitution_combine_mode="multiply",
-                static_friction=1.0,
-                dynamic_friction=1.0,
-            ),
-            visual_material=sim_utils.MdlFileCfg(
-                mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
-                project_uvw=True,
-                texture_scale=(0.25, 0.25),
-            ),
-            debug_vis=False,
-        )
+        self.scene.terrain.terrain_type = "plane"
+        self.scene.terrain.terrain_generator = None
+        # self.scene.terrain =  TerrainImporterCfg(
+        #     prim_path="/World/ground",
+        #     terrain_type="generator",
+        #     terrain_generator=ROUGH_TERRAINS_CFG,
+        #     max_init_terrain_level=5,
+        #     collision_group=-1,
+        #     physics_material=sim_utils.RigidBodyMaterialCfg(
+        #         friction_combine_mode="multiply",
+        #         restitution_combine_mode="multiply",
+        #         static_friction=1.0,
+        #         dynamic_friction=1.0,
+        #     ),
+        #     visual_material=sim_utils.MdlFileCfg(
+        #         mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
+        #         project_uvw=True,
+        #         texture_scale=(0.25, 0.25),
+        #     ),
+        #     debug_vis=False,
+        # )
 
-        self.scene.height_scanner = RayCasterCfg(
-            prim_path="{ENV_REGEX_NS}/Robot/body",
-            offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
-            ray_alignment="yaw",
-            pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
-            debug_vis=True,
-            mesh_prim_paths=["/World/ground"],
-        )
+        self.scene.height_scanner = None
+        # self.scene.height_scanner = RayCasterCfg(
+        #     prim_path="{ENV_REGEX_NS}/Robot/body",
+        #     offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+        #     ray_alignment="yaw",
+        #     pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+        #     debug_vis=True,
+        #     mesh_prim_paths=["/World/ground"],
+        # )
 
 
 class SpotFlatEnvCfg_PLAY(SpotFlatEnvCfg):

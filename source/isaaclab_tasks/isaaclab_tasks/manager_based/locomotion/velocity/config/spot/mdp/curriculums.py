@@ -291,3 +291,96 @@ class ActuatorShutdownCurriculum(ManagerTermBase):
             metrics[f"joint_{joint_idx}"] = float(self._fault_lower[joint_idx].item())
 
         return metrics
+
+@configclass
+class TerrainTrackingCurriculumCfg(CurriculumTermCfg):
+    """Configuration container for terrain progression based on command tracking."""
+
+    command_name: str = "base_velocity"
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+    linear_error_threshold: float = 0.6
+    angular_error_threshold: float = 0.7
+
+
+class TerrainTrackingCurriculum(ManagerTermBase):
+    """Curriculum that advances terrain difficulty using accumulated tracking error metrics."""
+
+    def __init__(self, cfg, env):
+        super().__init__(cfg, env)
+        params = cfg.params
+
+        self._asset_cfg: SceneEntityCfg = params.get("asset_cfg", getattr(cfg, "asset_cfg", SceneEntityCfg("robot")))
+        self._command_name: str = params.get("command_name", getattr(cfg, "command_name", "base_velocity"))
+
+        self._linear_error_threshold: float = float(
+            getattr(cfg, "linear_error_threshold", params.get("linear_error_threshold", 0.35))
+        )
+        self._angular_error_threshold: float = float(
+            getattr(cfg, "angular_error_threshold", params.get("angular_error_threshold", 0.35))
+        )
+
+        self._device = env.device
+        self._num_envs = env.scene.num_envs
+        self._terrain = env.scene.terrain
+
+        self._command_term = env.command_manager.get_term(self._command_name)
+        if self._command_term is None:
+            raise ValueError(f"Command term '{self._command_name}' not found for terrain curriculum.")
+        for key in ("error_vel_xy", "error_vel_yaw"):
+            if key not in self._command_term.metrics:
+                raise KeyError(f"Command term '{self._command_name}' does not track metric '{key}'.")
+
+        if self._distance_progress is None:
+            generator = getattr(self._terrain.cfg, "terrain_generator", None)
+            if generator and getattr(generator, "size", None):
+                self._distance_progress = float(generator.size[0]) * 0.5
+            else:
+                self._distance_progress = 1.0
+        self._distance_progress = max(float(self._distance_progress), 1e-3)
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        env_ids: Sequence[int],
+        asset_cfg: SceneEntityCfg | None = None,
+        command_name: str | None = None,
+    ) -> dict[str, float]:
+        env_ids_tensor = self._to_tensor(env_ids)
+        if env_ids_tensor.numel() == 0:
+            return self._current_metrics()
+
+        asset_cfg = asset_cfg or self._asset_cfg
+        command_name = command_name or self._command_name
+        command_term = env.command_manager.get_term(command_name)
+        if command_term is None:
+            raise ValueError(f"Command term '{command_name}' not found for terrain curriculum.")
+        self._command_term = command_term
+
+        lin_error = command_term.metrics["error_vel_xy"][env_ids_tensor]
+        ang_error = command_term.metrics["error_vel_yaw"][env_ids_tensor]
+
+        move_up = (lin_error < self._linear_error_threshold) & (ang_error < self._angular_error_threshold)
+
+        if move_up.any():
+            move_down = torch.zeros_like(move_up)
+            self._terrain.update_env_origins(env_ids_tensor, move_up, move_down)
+
+        return self._current_metrics()
+
+    def _to_tensor(self, env_ids: Sequence[int] | torch.Tensor | slice | None) -> torch.Tensor:
+        if env_ids is None or isinstance(env_ids, slice):
+            return torch.arange(self._num_envs, device=self._device, dtype=torch.long)
+        if isinstance(env_ids, torch.Tensor):
+            if env_ids.ndim == 0:
+                env_ids = env_ids.view(1)
+            return env_ids.to(device=self._device, dtype=torch.long)
+        env_tensor = torch.as_tensor(env_ids, device=self._device, dtype=torch.long)
+        return env_tensor.view(-1)
+
+    def _current_metrics(self) -> dict[str, float]:
+        metrics = {
+            "terrain_level": float(self._terrain.terrain_levels.float().mean().item()),
+            "lin_tracking_error": float(self._command_term.metrics["error_vel_xy"].mean().item()),
+            "ang_tracking_error": float(self._command_term.metrics["error_vel_yaw"].mean().item()),
+        }
+        return metrics

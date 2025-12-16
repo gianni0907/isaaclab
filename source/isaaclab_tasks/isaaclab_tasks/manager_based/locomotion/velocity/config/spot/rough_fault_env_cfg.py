@@ -344,7 +344,11 @@ class SpotTerminationsCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
-    terrain_levels = CurrTerm(func=mdp.terrain_levels_vel)
+    terrain_levels = spot_mdp.TerrainTrackingCurriculumCfg(
+        func=spot_mdp.TerrainTrackingCurriculum,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+        command_name="base_velocity",
+    )
     actuator_shutdown = spot_mdp.ActuatorShutdownCurriculumCfg(
         func=spot_mdp.ActuatorShutdownCurriculum,
         params={
